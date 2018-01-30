@@ -166,7 +166,7 @@ let show_ide initialPath prover codeFont traceFont runtime layout javaFrontend e
     else
       Java_frontend_bridge.unload())
   in
-  let simplifyTerms = ref false in
+  let simplifyTerms = ref true in
   let current_tab = ref None in
   let showLineNumbers enable =
     match !current_tab with
