@@ -52,6 +52,144 @@ type ('symbol, 'termnode) term =
 | BoundVar of int
 | Implies of ('symbol, 'termnode) term * ('symbol, 'termnode) term
 
+let map_subterm f = function
+  | Iff (t1, t2) -> Iff (f t1, f t2)
+  | Eq (t1, t2) -> Eq (f t1, f t2)
+  | Le (t1, t2) -> Le (f t1, f t2)
+  | Lt (t1, t2) -> Lt (f t1, f t2)
+  | Not t -> Not (f t)
+  | And (t1, t2) -> And (f t1, f t2)
+  | Or  (t1, t2) -> Or  (f t1, f t2)
+  | Add (t1, t2) -> Add (f t1, f t2)
+  | Sub (t1, t2) -> Sub (f t1, f t2)
+  | Mul (t1, t2) -> Mul (f t1, f t2)
+  | App (sym, terms, node) -> App (sym, List.map f terms, node)
+  | IfThenElse (t1, t2, t3) -> IfThenElse (f t1, f t2, f t3)
+  | RealLe (t1, t2) -> RealLe (f t1, f t2)
+  | RealLt (t1, t2) -> RealLt (f t1, f t2)
+  | Implies (t1, t2) -> Implies (f t1, f t2)
+  | TermNode _ | NumLit _ | True | False | BoundVar _ as term -> term
+
+let flatten_subterm f term =
+  let rec aux f acc term = match f term with
+    | None -> term :: acc
+    | Some (t1, t2) ->
+      aux f (aux f acc t2) t1
+  in
+  aux f [] term
+
+let zero_num = Num.num_of_int 0
+let one_num = Num.num_of_int 1
+
+let rec simplify_term term =
+  match term with
+  | Sub (NumLit n, term) ->
+    begin match simplify_term term with
+      | NumLit m -> NumLit (Num.sub_num n m)
+      | term' -> Sub (NumLit n, term')
+    end
+  | Add _ | Sub _ ->
+    let prj = function
+      | Add (a, b) -> Some (a, b)
+      | Sub (NumLit z', _) when Num.eq_num z' zero_num -> None
+      | Sub (a, b) -> Some (a, Sub (NumLit zero_num, b))
+      | _ -> None
+    in
+    let cons a b = Add (b, a) in
+    let terms = flatten_simplify prj term in
+    let total, posterms, negterms =
+      let rec f (total, pos, neg) = function
+          | NumLit a -> (Num.add_num total a, pos, neg)
+          | Sub (a, NumLit b) ->
+            let (total, pos, neg) = f (total, pos, neg) a in
+            (Num.sub_num total b, pos, neg)
+          | Sub (a, b) ->
+            let (total, pos, neg) = f (total, pos, neg) a in
+            (total, pos, b :: neg)
+          | term -> (total, term :: pos, neg)
+      in
+      List.fold_left f (zero_num, [], [])  terms
+    in
+    let posterm = match posterms with
+      | [] -> NumLit total
+      | x :: xs when Num.eq_num total zero_num ->
+        List.fold_left cons x xs
+      | xs -> List.fold_left cons (NumLit total) xs
+    in
+    begin match negterms with
+      | [] -> posterm
+      | neg :: negs -> Sub (posterm, List.fold_left cons neg negs)
+    end
+
+  | Mul _ ->
+    let prj = function Mul (a, b) -> Some (a, b) | _ -> None in
+    let cons a b = Mul (b, a) in
+    let terms = flatten_simplify prj term in
+    let total, terms =
+      List.fold_left (fun (total, terms) -> function
+          | NumLit num -> (Num.mult_num num total, terms)
+          | term -> (total, term :: terms)
+        ) (one_num, [])  terms
+    in
+    begin match terms with
+    | [] -> NumLit total
+    | _ when Num.eq_num total zero_num -> NumLit zero_num
+    | x :: xs when Num.eq_num total one_num -> List.fold_left cons x xs
+    | xs -> List.fold_left cons (NumLit total) xs
+    end
+
+  | And _ ->
+    let prj = function And (a, b) -> Some (a, b) | _ -> None in
+    let cons a b = And (b, a) in
+    let terms = flatten_simplify prj term in
+    let total, terms =
+      List.fold_left (fun (total, terms) -> function
+          | True -> (total, terms)
+          | False -> (false, [])
+          | term -> (total, term :: terms)
+        ) (true, [])  terms
+    in
+    if total then
+      match terms with
+      | [] -> True
+      | x :: xs -> List.fold_left cons x xs
+    else False
+
+  | Or _ ->
+    let prj = function Or (a, b) -> Some (a, b) | _ -> None in
+    let cons a b = Or (b, a) in
+    let terms = flatten_simplify prj term in
+    let total, terms =
+      List.fold_left (fun (total, terms) -> function
+          | True -> (true, [])
+          | False -> (false, terms)
+          | term -> (total, term :: terms)
+        ) (false, [])  terms
+    in
+    if not total then
+      match terms with
+      | [] -> False
+      | x :: xs -> List.fold_left cons x xs
+    else True
+
+  | term ->
+    match map_subterm simplify_term term with
+    | Not (Not x) -> x
+    | Not True -> False
+    | Not False -> True
+    | Not (Le (a, b)) -> Lt (b, a)
+    | Not (Lt (a, b)) -> Le (b, a)
+    | IfThenElse (True, b, c) -> b
+    | IfThenElse (False, b, c) -> c
+    | Iff (a, True) | Iff (True, a) -> a
+    | Iff (a, False) | Iff (False, a) -> Not a
+    | term -> term
+
+and flatten_simplify prj term =
+  List.concat
+    (List.map (flatten_subterm prj)
+       (List.map simplify_term (flatten_subterm prj term)))
+
 let term_subst bound_env t =
   let rec iter t =
     match t with
@@ -1579,5 +1717,6 @@ and context () =
           )
         | _ -> failwith "Redux supports only symbol applications at the top level of axiom triggers."
       )
-    method simplify (t: (symbol, termnode) term): ((symbol, termnode) term) option = None
+    method simplify (t: (symbol, termnode) term): ((symbol, termnode) term) option =
+      Some (simplify_term t)
   end
