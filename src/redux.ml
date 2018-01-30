@@ -191,31 +191,11 @@ and flatten_simplify prj term =
        (List.map simplify_term (flatten_subterm prj term)))
 
 let term_subst bound_env t =
-  let rec iter t =
-    match t with
-      TermNode _ -> t
-    | Iff (t1, t2) -> Iff (iter t1, iter t2)
-    | Eq (t1, t2) -> Eq (iter t1, iter t2)
-    | Le (t1, t2) -> Le (iter t1, iter t2)
-    | Lt (t1, t2) -> Lt (iter t1, iter t2)
-    | Not t -> Not (iter t)
-    | And (t1, t2) -> And (iter t1, iter t2)
-    | Or (t1, t2) -> Or (iter t1, iter t2)
-    | Add (t1, t2) -> Add (iter t1, iter t2)
-    | Sub (t1, t2) -> Sub (iter t1, iter t2)
-    | Mul (t1, t2) -> Mul (iter t1, iter t2)
-    | NumLit n -> t
-    | App (s, args, None) -> App (s, List.map iter args, None)
-    | App (s, args, Some _) -> t
-    | IfThenElse (t1, t2, t3) -> IfThenElse (iter t1, iter t2, iter t3)
-    | RealLe (t1, t2) -> RealLe (iter t1, iter t2)
-    | RealLt (t1, t2) -> RealLt (iter t1, iter t2)
-    | True -> t
-    | False -> t
+  let rec subst = function
     | BoundVar i -> TermNode (List.assoc i bound_env)
-    | Implies (t1, t2) -> Implies (iter t1, iter t2)
+    | t -> map_subterm subst t
   in
-  iter t
+  subst t
 
 module NumMap = Map.Make (struct type t = num let compare a b = compare_num a b end)
 
