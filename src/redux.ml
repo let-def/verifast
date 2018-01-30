@@ -190,6 +190,34 @@ and flatten_simplify prj term =
     (List.map (flatten_subterm prj)
        (List.map simplify_term (flatten_subterm prj term)))
 
+type precedence = int * bool
+let max_precedence = max_int
+let min_precedence = min_int
+
+let precedence = function
+  | TermNode _ | NumLit _ | App _ | True | False | BoundVar _ -> (1, false)
+  | Not _ -> (2, false)
+  | Mul _ -> (3, true)
+  | Add _ -> (4, true)
+  | Sub _ -> (5, false)
+  | Eq _ -> (6, false)
+  | Le _ -> (6, false)
+  | Lt _ -> (6, false)
+  | RealLe _ -> (6, false)
+  | RealLt _ -> (6, false)
+  | Implies _ -> (10, false)
+  | Iff _ -> (10, true)
+  | And _ -> (11, true)
+  | Or _ -> (12, true)
+  | IfThenElse _ -> (13, false)
+
+let wrap p0 assoc (s1,p1) =
+  if (if assoc
+      then p0 < p1
+      else p0 <= p1)
+  then "(" ^ s1 ^ ")"
+  else s1
+
 let term_subst bound_env t =
   let rec subst = function
     | BoundVar i -> TermNode (List.assoc i bound_env)
@@ -1301,33 +1329,51 @@ and context () =
           None
       in
       App (s, ts, termnode)
-    
-    method pprint (t: (symbol, termnode) term): string =
-      match t with
-        TermNode t -> t#pprint
-      | True -> "true"
-      | False -> "false"
-      | Iff (t1, t2) -> self#pprint t1 ^ " <==> " ^ self#pprint t2
-      | Eq (t1, t2) -> self#pprint t1 ^ " = " ^ self#pprint t2
-      | Le (t1, t2) -> self#pprint t1 ^ " <= " ^ self#pprint t2
-      | Lt (t1, t2) -> self#pprint t1 ^ " < " ^ self#pprint t2
-      | RealLe (t1, t2) -> self#pprint t1 ^ " <=/ " ^ self#pprint t2
-      | RealLt (t1, t2) -> self#pprint t1 ^ " </ " ^ self#pprint t2
-      | And (t1, t2) -> self#pprint t1 ^ " && " ^ self#pprint t2
-      | Or (t1, t2) -> self#pprint t1 ^ " || " ^ self#pprint t2
-      | Not t -> "!(" ^ self#pprint t ^ ")"
-      | Add (t1, t2) -> "(" ^ self#pprint t1 ^ " + " ^ self#pprint t2 ^ ")"
-      | Sub (t1, t2) -> "(" ^ self#pprint t1 ^ " - " ^ self#pprint t2 ^ ")"
-      | App (s, ts, _) -> s#name ^ (if ts = [] then "" else "(" ^ String.concat ", " (List.map (fun t -> self#pprint t) ts) ^ ")")
-      | NumLit n -> string_of_num n
-      | Mul (t1, t2) -> Printf.sprintf "(%s * %s)" (self#pprint t1) (self#pprint t2)
-      | IfThenElse (t1, t2, t3) -> "(" ^ self#pprint t1 ^ " ? " ^ self#pprint t2 ^ " : " ^ self#pprint t3 ^ ")"
-      | BoundVar i -> Printf.sprintf "bound.%i" i
-      | Implies (t1, t2) -> self#pprint t1 ^ " ==> " ^ self#pprint t2
-    
+
+    method pprint_prec (term : (symbol, termnode) term) : string * int =
+      let prec, assoc = precedence term in
+      let wrap_bin t1 s t2 =
+        wrap prec assoc (self#pprint_prec t1)
+        ^ " " ^ s ^ " " ^
+        wrap prec assoc (self#pprint_prec t2)
+      in
+      let text = match term with
+        | TermNode t -> t#pprint
+        | True -> "true"
+        | False -> "false"
+        | Iff (t1, t2) -> wrap_bin t1 "<==>" t2
+        | Eq (t1, t2) -> wrap_bin t1 "==" t2
+        | Not (Eq (t1, t2)) -> wrap_bin t1 "!=" t2
+        | Le (t1, t2) -> wrap_bin t1 "<=" t2
+        | Lt (t1, t2) -> wrap_bin t1 "<" t2
+        | RealLe (t1, t2) -> wrap_bin t1 "<=/" t2
+        | RealLt (t1, t2) -> wrap_bin t1 "</" t2
+        | And (t1, t2) -> wrap_bin t1 "&&" t2
+        | Or (t1, t2) -> wrap_bin t1 "||" t2
+        | Not t -> "!" ^ wrap prec assoc (self#pprint_prec t)
+        | Mul (t1, t2) -> wrap_bin t1 "*" t2
+        | Add (t1, NumLit n) when Num.lt_num n zero_num ->
+          wrap prec assoc (self#pprint_prec t1) ^ " - " ^ Num.string_of_num (Num.minus_num n)
+        | Add (t1, t2) -> wrap_bin t1 "+" t2
+        | Sub (t1, t2) -> wrap_bin t1 "-" t2
+        | App (s, [], _) -> s#name
+        | App (s, ts, _) ->
+          s#name ^ ("(" ^ String.concat ", " (List.map self#pprint ts) ^ ")")
+        | NumLit n -> string_of_num n
+        | IfThenElse (t1, t2, t3) ->
+          wrap prec assoc (self#pprint_prec t1) ^
+          " ? " ^ wrap prec assoc (self#pprint_prec t2) ^
+          " : " ^ wrap prec assoc (self#pprint_prec t3)
+        | BoundVar i -> Printf.sprintf "bound.%i" i
+        | Implies (t1, t2) -> wrap_bin t1 "==>" t2
+      in
+      (text, prec)
+
+    method pprint term = fst (self#pprint_prec term)
+
     method pprint_sym (s : symbol) : string = s#name
     method pprint_sort (s : unit) : string = "()"
-    
+
     method get_node s vs =
       match vs with
         [] ->
