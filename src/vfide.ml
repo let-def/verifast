@@ -1063,7 +1063,13 @@ let show_ide initialPath prover codeFont traceFont runtime layout javaFrontend e
             append_assoc_items srcEnvStore srcEnvKCol srcEnvCol1 srcEnvCol2 (strings_of_env caller_env)
           end
       end;
-      append_items assumptionsStore assumptionsKCol assumptionsCol (List.rev ass);
+      let uniq =
+        let table = Hashtbl.create 7 in
+        fun item ->
+          if Hashtbl.mem table item then false
+          else (Hashtbl.add table item (); true)
+      in
+      append_items assumptionsStore assumptionsKCol assumptionsCol (List.filter uniq (List.rev ass));
       let compare_chunks (Chunk ((g, literal), targs, coef, ts, size)) (Chunk ((g', literal'), targs', coef', ts', size')) =
         let r = compare g g' in
         if r <> 0 then r else

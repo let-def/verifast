@@ -1353,7 +1353,7 @@ and context () =
         | Not t -> "!" ^ wrap prec assoc (self#pprint_prec t)
         | Mul (t1, t2) -> wrap_bin t1 "*" t2
         | Add (t1, NumLit n) when Num.lt_num n zero_num ->
-          wrap prec assoc (self#pprint_prec t1) ^ " - " ^ Num.string_of_num (Num.minus_num n)
+          wrap (prec + 1) assoc (self#pprint_prec t1) ^ " - " ^ Num.string_of_num (Num.minus_num n)
         | Add (t1, t2) -> wrap_bin t1 "+" t2
         | Sub (t1, t2) -> wrap_bin t1 "-" t2
         | App (s, [], _) -> s#name
